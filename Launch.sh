@@ -31,9 +31,10 @@ function _sleep
    return 1
 }
 
-BASE_URL="http://client.annatel.tv"
+BASE_URL="http://www.annatel.tv"
 USER=`cat annatel.conf | grep USER | sed 's/USER="\([^"]*\)".*/\1/'`
 PASSWD=`cat annatel.conf | grep PASSWD | sed 's/PASSWD="\([^"]*\)".*/\1/'`
+USER_AGENT="User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:72.0) Gecko/20100101 Firefox/72.0"
 
 show_channels=0
 launch_vlc=0
@@ -53,7 +54,7 @@ do
          ;;
       -d | --duration )
          shift
-         duration=`expr $1 \* 5`
+         duration=`expr $1 \* 10`
          ;;
       -o | --output )
          shift
@@ -71,15 +72,20 @@ do
    shift
 done
 
+rm -f channels.html
+curl -o channels.html "$BASE_URL/api/getchannels?login=$USER&password=$PASSWD" -H $USER_AGENT > /dev/null 2>&1
+
 if [ $show_channels -ne 0 ]
 then
+   ch_id=1
    # Download channels page
-   wget -T 30 -t 10 -q -O channels.html --post-data='login='$USER'&password='$PASSWD'' $BASE_URL/auth/dologin
-   for ch_line in `cat channels.html | grep category | grep title`
+   for ch_line in `cat channels.html | grep '<name>'`
    do
-      echo $ch_line | sed 's/.*a href=".channel.\([0-9]\+\).*title="\([^"]\+\)".*/\1: \2/'
+      echo -n "$ch_id: "
+      echo $ch_line | sed 's/.*<name>\([^<]\+\)<.*/\1/'
+      ch_id=`expr $ch_id + 1`
    done
-   rm channels.html
+   rm -f channel.html
    exit
 fi
 
@@ -90,16 +96,18 @@ then
 fi
 
 # Download channel page
-wget -T 30 -t 10 -q -O channel.html --post-data='login='$USER'&password='$PASSWD'&auth_url_return=/channel/'$channel_id'.html' $BASE_URL/auth/dologin
+m3u8_line=`cat channels.html | grep m3u8 | head -n $channel_id`
+rm -f channels.html
 
 # Main m3u8 url
-data_base_url=`cat channel.html | grep "src:" | sed 's/.*src: "\(.*isml\).*"/\1/'`
-data_res_url=`cat channel.html | grep "src:" | sed 's/.*src: ".*isml\/\(.*\)"/\1/'`
-rm channel.html
+data_base_url=`echo $m3u8_line | sed 's/.*<url>\(.*isml\).*/\1/'`
+data_res_url=`echo $m3u8_line | sed 's/.*<url>.*isml\/\(.*\)/\1/'`
+
 # Download main m3u8
 wget -T 30 -t 10 -q -O channel.m3u8 $data_base_url/$data_res_url
+
 # Best resolution
-data_res_url=`cat channel.m3u8 | tail -n 1`
+data_res_url=`cat channel.m3u8 | grep -v "#" | head -n 1`
 
 if [ -z $output_file ]
 then
@@ -118,18 +126,30 @@ then
 fi
 
 
-max_ts_id=0
+last_ts_url="none"
 
 while [ 1 -eq 1 ]
 do
    # Download updated m3u8
    wget -T 30 -t 10 -q -O channel.m3u8 $data_base_url/$data_res_url
+
+   block=0
+   if [ ! -z "`grep $last_ts_url channel.m3u8`" ]
+   then
+     block=1
+   fi
+
    for ts in `cat channel.m3u8 | grep -v "#"`
    do
-      ts_id=`echo $ts | sed 's/.*-\([0-9]\+\).ts.*/\1/'`
-      if [ $ts_id -gt $max_ts_id ]
+      if [ $block == 1 ]
       then
-         max_ts_id=$ts_id
+        # Block ts download until last downloaded ts is checked
+        if [ $ts == $last_ts_url ]
+        then
+          block=0
+        fi
+      else
+         last_ts_url=$ts
          curl $data_base_url/$ts >> $output 2> /dev/null
          if [ $duration -ne -1 ]
          then
@@ -141,8 +161,8 @@ do
          fi
       fi
    done
-   rm channel.m3u8
-   _sleep 12 $vlc_pid
+   rm -f channel.m3u8
+   _sleep 6 $vlc_pid
    if [ $? -eq 0 ]
    then
       exit
