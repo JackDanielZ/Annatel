@@ -324,21 +324,24 @@ _url_complete_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
         {
           l.current++; /* Skip < */
           char *w = _next_word(&l, NULL, EINA_TRUE), *str, *end;
-          l.current++; /* Skip > */
-          _ws_skip(&l);
-          end = strstr(l.current, "</"); /* Search for end of XML element */
-          str = strndup(l.current, end - l.current); /* Copy string */
-          l.current = end; /* Jump over the string */
-          JUMP_AT(&l, ">", 1); /* and over the XML element name */
-          _ws_skip(&l);
+          if (w)
+          {
+            l.current++; /* Skip > */
+            _ws_skip(&l);
+            end = strstr(l.current, "</"); /* Search for end of XML element */
+            str = strndup(l.current, end - l.current); /* Copy string */
+            l.current = end; /* Jump over the string */
+            JUMP_AT(&l, ">", 1); /* and over the XML element name */
 
-          if (!strcmp(w, "name")) ch_desc->name = str;
-          else if (!strcmp(w, "logo")) ch_desc->logo_url = str;
-          else if (!strcmp(w, "url")) ch_desc->url = str;
-          else if (!strcmp(w, "program_description")) ch_desc->desc = str;
-          else if (!strcmp(w, "program_title")) ch_desc->desc_title = str;
-          else free(str);
-          free(w);
+            if (!strcmp(w, "name")) ch_desc->name = str;
+            else if (!strcmp(w, "logo")) ch_desc->logo_url = str;
+            else if (!strcmp(w, "url")) ch_desc->url = str;
+            else if (!strcmp(w, "program_description")) ch_desc->desc = str;
+            else if (!strcmp(w, "program_title")) ch_desc->desc_title = str;
+            else free(str);
+            free(w);
+          }
+          _ws_skip(&l);
         }
         _ws_skip(&l);
         elm_gengrid_item_append(_main_grid, _main_grid_item_class, ch_desc, NULL, NULL);
