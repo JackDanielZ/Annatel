@@ -357,18 +357,21 @@ _url_complete_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
 }
 
 static void
-_grid_item_selected(void *data EINA_UNUSED, Evas_Object *obj, void *event_info)
+_grid_item_focused(void *data EINA_UNUSED, Evas_Object *obj, void *event_info)
 {
   char desc[1024];
-  Elm_Object_Item *it = elm_gengrid_selected_item_get(_main_grid);
+  Elm_Object_Item *it = event_info;
   Channel_Desc *ch_desc = elm_object_item_data_get(it);
-  sprintf(desc, "<font_size=20><b>Channel: </b>%s<br><b>Title: </b>%s<br><b>Description: </b>%s<br></font_size>", ch_desc->name, ch_desc->desc_title, ch_desc->desc);
-  printf("Selected: %s\n", ch_desc->name);
-  elm_object_text_set(_channel_desc_label, desc);
+  if (ch_desc)
+  {
+    sprintf(desc, "<font_size=20><b>Channel: </b>%s<br><b>Title: </b>%s<br><b>Description: </b>%s<br></font_size>", ch_desc->name, ch_desc->desc_title, ch_desc->desc);
+    printf("Focused: %s\n", ch_desc->name);
+    elm_object_text_set(_channel_desc_label, desc);
+  }
 }
 
 static void
-_grid_item_unselected(void *data EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *event_info EINA_UNUSED)
+_grid_item_unfocused(void *data EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *event_info EINA_UNUSED)
 {
 }
 
@@ -424,10 +427,11 @@ int main(int argc, char **argv)
 
   _main_grid = elm_gengrid_add(panes1);
   elm_gengrid_item_size_set(_main_grid, ELM_SCALE_SIZE(150), ELM_SCALE_SIZE(150));
+  elm_gengrid_multi_select_set(_main_grid, EINA_FALSE);
   evas_object_size_hint_weight_set(_main_grid, EVAS_HINT_EXPAND, EVAS_HINT_EXPAND);
   evas_object_size_hint_align_set(_main_grid, EVAS_HINT_FILL, EVAS_HINT_FILL);
-  evas_object_smart_callback_add(_main_grid, "selected", _grid_item_selected, NULL);
-  evas_object_smart_callback_add(_main_grid, "unselected", _grid_item_unselected, NULL);
+  evas_object_smart_callback_add(_main_grid, "item,focused", _grid_item_focused, NULL);
+  evas_object_smart_callback_add(_main_grid, "item,unfocused", _grid_item_unfocused, NULL);
   evas_object_smart_callback_add(_main_grid, "clicked,double", _grid_item_double_clicked, NULL);
   elm_object_part_content_set(panes1, "left", _main_grid);
   elm_panes_content_left_size_set(panes1, 0.8);
