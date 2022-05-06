@@ -28,10 +28,16 @@ typedef struct
 typedef struct
 {
   char *name;
-  char *url;
   char *desc;
   char *desc_title;
   char *logo_url;
+
+  char *main_url;       /* URL present in the channels HTML file, without m3u8 path */
+  char *main_m3u8_url;
+  Ecore_Con_Url *main_m3u8_url_eo;
+  char *resolution_url; /* Best resolution URL */
+
+  char downloaded_data[16384];
 } Channel_Desc;
 
 static Eo *_main_box = NULL, *_main_grid = NULL, *_channel_desc_label = NULL;
@@ -291,7 +297,11 @@ _url_data_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
   if (ch_desc == NULL)
   {
     /* The received data is the channels list */
-    strcat(_channels_list_xml, (char *)url_data->data);
+    strncat(_channels_list_xml, (char *)url_data->data, url_data->size);
+  }
+  else
+  {
+    strncat(ch_desc->downloaded_data, (char *)url_data->data, url_data->size);
   }
 
   return EINA_TRUE;
@@ -335,9 +345,15 @@ _url_complete_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
 
             if (!strcmp(w, "name")) ch_desc->name = str;
             else if (!strcmp(w, "logo")) ch_desc->logo_url = str;
-            else if (!strcmp(w, "url")) ch_desc->url = str;
             else if (!strcmp(w, "program_description")) ch_desc->desc = str;
             else if (!strcmp(w, "program_title")) ch_desc->desc_title = str;
+            else if (!strcmp(w, "url"))
+            {
+              char *last_slash = strrchr(str, '/');
+              *last_slash = '\0';
+              ch_desc->main_url = str;
+              ch_desc->main_m3u8_url = last_slash + 1;
+            }
             else free(str);
             free(w);
           }
@@ -352,6 +368,35 @@ _url_complete_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
       }
     }
   }
+  else
+  {
+    if (ch_desc->main_m3u8_url_eo)
+    {
+      /* We have to parse the resolutions */
+      char *tmp = ch_desc->downloaded_data;
+      char *res_str;
+      int max_bandwidth = 0;
+      while ((res_str = strstr(tmp, ",BANDWIDTH=")))
+      {
+        int cur_bandwidth;
+        res_str += 11;
+
+        cur_bandwidth = strtoul(res_str, &tmp, 10);
+        if (cur_bandwidth > max_bandwidth)
+        {
+          max_bandwidth = cur_bandwidth;
+          tmp++; /* Skip newline */
+          res_str = strchr(tmp, '\n');
+          if (res_str) *res_str = '\0';
+          free(ch_desc->resolution_url);
+          ch_desc->resolution_url = strdup(tmp);
+          if (res_str) tmp = res_str + 1;
+        }
+      }
+      printf("ZZZ %s ZZZ\n", ch_desc->resolution_url);
+      ch_desc->main_m3u8_url_eo = NULL;
+    }
+  }
 
   return EINA_TRUE;
 }
@@ -359,14 +404,33 @@ _url_complete_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
 static void
 _grid_item_focused(void *data EINA_UNUSED, Evas_Object *obj, void *event_info)
 {
-  char desc[1024];
+  char str[1024];
   Elm_Object_Item *it = event_info;
   Channel_Desc *ch_desc = elm_object_item_data_get(it);
-  if (ch_desc)
+
+  if (!ch_desc) return;
+  sprintf(str, "<font_size=20><b>Channel: </b>%s<br><b>Title: </b>%s<br><b>Description: </b>%s<br></font_size>", ch_desc->name, ch_desc->desc_title, ch_desc->desc);
+  printf("Focused: %s\n", ch_desc->name);
+  elm_object_text_set(_channel_desc_label, str);
+
+  if (!ch_desc->resolution_url)
   {
-    sprintf(desc, "<font_size=20><b>Channel: </b>%s<br><b>Title: </b>%s<br><b>Description: </b>%s<br></font_size>", ch_desc->name, ch_desc->desc_title, ch_desc->desc);
-    printf("Focused: %s\n", ch_desc->name);
-    elm_object_text_set(_channel_desc_label, desc);
+    if (!ch_desc->main_m3u8_url_eo)
+    {
+      sprintf(str, "%s/%s", ch_desc->main_url, ch_desc->main_m3u8_url);
+      printf("main url: %s\n", str);
+      memset(ch_desc->downloaded_data, '\0', sizeof(ch_desc->downloaded_data));
+      ch_desc->main_m3u8_url_eo = ecore_con_url_new(str);
+      ecore_con_url_data_set(ch_desc->main_m3u8_url_eo, ch_desc);
+      ecore_con_url_additional_header_add(ch_desc->main_m3u8_url_eo, "User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:72.0) Gecko/20100101 Firefox/72.0");
+      ecore_con_url_timeout_set(ch_desc->main_m3u8_url_eo, 5.0);
+
+      if (!ecore_con_url_get(ch_desc->main_m3u8_url_eo))
+      {
+        printf("Cannot download %s\n", str);
+        ch_desc->main_m3u8_url_eo = NULL;
+      }
+    }
   }
 }
 
