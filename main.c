@@ -17,6 +17,7 @@
 #define SEC_IN_MONTH (30 * SEC_IN_DAY)
 #define SEC_IN_YEAR  (12 * SEC_IN_MONTH)
 
+#define MOVIE_FILE "annatel.mp4"
 
 static const char *baseUrl = "http://www.annatel.tv";
 
@@ -54,6 +55,7 @@ typedef struct
   char *resolution_name;     /* String (e.g tracks-v1a1) to be used to download timeslots */
   Eina_List *ts_to_download; /* Element is the last part of the URL to download the timeslot */
   Ecore_Con_Url *url_eo;
+  FILE *output_fp;
 
   Download_State dwn_state;
   int last_ts_id;
@@ -508,9 +510,8 @@ _url_complete_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
       }
       case TS_DOWNLOAD:
       {
-        FILE *fp = fopen("toto.mp4", "ab");
-        fwrite(ch_desc->downloaded_data, ch_desc->downloaded_data_size, 1, fp);
-        fclose(fp);
+        if (ch_desc->output_fp)
+          fwrite(ch_desc->downloaded_data, ch_desc->downloaded_data_size, 1, ch_desc->output_fp);
         _ts_download(ch_desc);
         break;
       }
@@ -534,6 +535,7 @@ _grid_item_focused(void *data EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *e
   printf("Focused: %s\n", ch_desc->name);
   elm_object_text_set(_channel_desc_label, str);
 
+  ch_desc->output_fp = fopen(MOVIE_FILE, "wb");
   if (!ch_desc->ts_list_url)
   {
     if (!ch_desc->url_eo)
@@ -573,8 +575,14 @@ _grid_item_focused(void *data EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *e
 }
 
 static void
-_grid_item_unfocused(void *data EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *event_info EINA_UNUSED)
+_grid_item_unfocused(void *data EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *event_info)
 {
+  Elm_Object_Item *it = event_info;
+  Channel_Desc *ch_desc = elm_object_item_data_get(it);
+
+  if (!ch_desc) return;
+  fclose(ch_desc->output_fp);
+  ch_desc->output_fp = NULL;
 }
 
 static void
