@@ -9,9 +9,25 @@
 
 #define _EET_ENTRY "config"
 
+#define USER_AGENT "User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:72.0) Gecko/20100101 Firefox/72.0"
+
+#define SEC_IN_MIN   (60)
+#define SEC_IN_HOUR  (60 * SEC_IN_MIN)
+#define SEC_IN_DAY   (24 * SEC_IN_HOUR)
+#define SEC_IN_MONTH (30 * SEC_IN_DAY)
+#define SEC_IN_YEAR  (12 * SEC_IN_MONTH)
+
+
 static const char *baseUrl = "http://www.annatel.tv";
 
 static char _channels_list_xml[100000] = {0};
+
+typedef enum
+{
+  MAIN_M3U8_DOWNLOAD,
+  TS_LIST_DOWNLOAD,
+  TS_DOWNLOAD
+} Download_State;
 
 typedef struct
 {
@@ -32,21 +48,28 @@ typedef struct
   char *desc_title;
   char *logo_url;
 
-  char *main_url;       /* URL present in the channels HTML file, without m3u8 path */
-  char *main_m3u8_url;
-  Ecore_Con_Url *main_m3u8_url_eo;
-  char *resolution_url; /* Best resolution URL */
+  char *main_url;            /* URL present in the channels HTML file, without m3u8 path */
+  char *main_m3u8_url_part;  /* Channel m3u8 */
+  char *ts_list_url;         /* Timeslots list URL */
+  char *resolution_name;     /* String (e.g tracks-v1a1) to be used to download timeslots */
+  Eina_List *ts_to_download; /* Element is the last part of the URL to download the timeslot */
+  Ecore_Con_Url *url_eo;
 
-  char downloaded_data[16384];
+  Download_State dwn_state;
+  int last_ts_id;
+  char *downloaded_data;
+  int downloaded_data_size;
+  int downloaded_data_full_size;
 } Channel_Desc;
 
-static Eo *_main_box = NULL, *_main_grid = NULL, *_channel_desc_label = NULL;
+static Eo *_main_grid = NULL, *_channel_desc_label = NULL;
 static Elm_Gengrid_Item_Class *_main_grid_item_class = NULL;
 
 static Eet_Data_Descriptor *_config_edd = NULL;
 
 static Config *_config = NULL;
 
+#if 0
 static Eo *
 _label_create(Eo *parent, const char *text, Eo **wref)
 {
@@ -94,6 +117,7 @@ _icon_create(Eo *parent, const char *path, Eo **wref)
      }
    return ic;
 }
+#endif
 
 static void
 _ws_skip(Lexer *l)
@@ -149,6 +173,7 @@ _next_word(Lexer *l, const char *special, Eina_Bool special_allowed)
    return word;
 }
 
+#if 0
 static long
 _next_integer(Lexer *l)
 {
@@ -163,6 +188,7 @@ _next_integer(Lexer *l)
    l->current = str;
    return atol(n_str);
 }
+#endif
 
 #define JUMP_AT(l, ...) _jump_at(l, __VA_ARGS__, NULL)
 
@@ -288,6 +314,29 @@ _main_grid_item_del(void *data, Evas_Object *obj EINA_UNUSED)
   free(data);
 }
 
+static void
+_ts_download(Channel_Desc *ch_desc)
+{
+  char str[1024];
+  char *ts_str = eina_list_data_get(ch_desc->ts_to_download);
+  if (!ts_str) return;
+
+  sprintf(str, "%s/%s/%s", ch_desc->main_url, ch_desc->resolution_name, ts_str);
+  printf("ts url: %s\n", str);
+  free(ts_str);
+  ch_desc->ts_to_download = eina_list_remove_list(ch_desc->ts_to_download, ch_desc->ts_to_download);
+
+  ch_desc->url_eo = ecore_con_url_new(str);
+  ch_desc->dwn_state = TS_DOWNLOAD;
+  ecore_con_url_data_set(ch_desc->url_eo, ch_desc);
+  ecore_con_url_additional_header_add(ch_desc->url_eo, USER_AGENT);
+  ecore_con_url_timeout_set(ch_desc->url_eo, 5.0);
+  if (!ecore_con_url_get(ch_desc->url_eo))
+  {
+    printf("Cannot download %s\n", str);
+  }
+}
+
 static Eina_Bool
 _url_data_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
 {
@@ -301,7 +350,13 @@ _url_data_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
   }
   else
   {
-    strncat(ch_desc->downloaded_data, (char *)url_data->data, url_data->size);
+    if (ch_desc->downloaded_data_full_size < ch_desc->downloaded_data_size + url_data->size)
+    {
+      ch_desc->downloaded_data_full_size = 2 * (ch_desc->downloaded_data_size + url_data->size);
+      ch_desc->downloaded_data = realloc(ch_desc->downloaded_data, ch_desc->downloaded_data_full_size);
+    }
+    memcpy(ch_desc->downloaded_data + ch_desc->downloaded_data_size, url_data->data, url_data->size);
+    ch_desc->downloaded_data_size += url_data->size;
   }
 
   return EINA_TRUE;
@@ -316,7 +371,6 @@ _url_complete_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
 
   if (ch_desc == NULL)
   {
-    int i;
     int end_channels = 0;
 
     Lexer l;
@@ -328,7 +382,7 @@ _url_complete_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
       _ws_skip(&l);
       if (_is_next_token(&l, "<channel>")) /* New channel */
       {
-        ch_desc = malloc(sizeof(Channel_Desc));
+        ch_desc = calloc(1, sizeof(Channel_Desc));
         _ws_skip(&l);
         while (!_is_next_token(&l, "</channel>"))
         {
@@ -352,7 +406,7 @@ _url_complete_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
               char *last_slash = strrchr(str, '/');
               *last_slash = '\0';
               ch_desc->main_url = str;
-              ch_desc->main_m3u8_url = last_slash + 1;
+              ch_desc->main_m3u8_url_part = last_slash + 1;
             }
             else free(str);
             free(w);
@@ -370,39 +424,106 @@ _url_complete_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
   }
   else
   {
-    if (ch_desc->main_m3u8_url_eo)
+    switch (ch_desc->dwn_state)
     {
-      /* We have to parse the resolutions */
-      char *tmp = ch_desc->downloaded_data;
-      char *res_str;
-      int max_bandwidth = 0;
-      while ((res_str = strstr(tmp, ",BANDWIDTH=")))
+      case MAIN_M3U8_DOWNLOAD:
       {
-        int cur_bandwidth;
-        res_str += 11;
-
-        cur_bandwidth = strtoul(res_str, &tmp, 10);
-        if (cur_bandwidth > max_bandwidth)
+        char str[1024];
+        /* We have to parse the resolutions */
+        char *tmp = ch_desc->downloaded_data;
+        char *res_str;
+        int max_bandwidth = 0;
+        while ((res_str = strstr(tmp, ",BANDWIDTH=")))
         {
-          max_bandwidth = cur_bandwidth;
-          tmp++; /* Skip newline */
-          res_str = strchr(tmp, '\n');
-          if (res_str) *res_str = '\0';
-          free(ch_desc->resolution_url);
-          ch_desc->resolution_url = strdup(tmp);
-          if (res_str) tmp = res_str + 1;
+          int cur_bandwidth;
+          res_str += 11;
+
+          cur_bandwidth = strtoul(res_str, &tmp, 10);
+          if (cur_bandwidth > max_bandwidth)
+          {
+            max_bandwidth = cur_bandwidth;
+            tmp++; /* Skip newline */
+            res_str = strchr(tmp, '\n');
+            if (res_str) *res_str = '\0';
+            free(ch_desc->ts_list_url);
+            ch_desc->ts_list_url = strdup(tmp);
+            if (res_str) tmp = res_str + 1;
+          }
         }
+        tmp = strchr(ch_desc->ts_list_url, '/');
+        ch_desc->resolution_name = strndup(ch_desc->ts_list_url, tmp - ch_desc->ts_list_url);
+        sprintf(str, "%s/%s", ch_desc->main_url, ch_desc->ts_list_url);
+        printf("ts list url: %s\n", str);
+        ch_desc->url_eo = ecore_con_url_new(str);
+        ch_desc->dwn_state = TS_LIST_DOWNLOAD;
+        ecore_con_url_data_set(ch_desc->url_eo, ch_desc);
+        ecore_con_url_additional_header_add(ch_desc->url_eo, USER_AGENT);
+        ecore_con_url_timeout_set(ch_desc->url_eo, 5.0);
+
+        if (!ecore_con_url_get(ch_desc->url_eo))
+        {
+          printf("Cannot download %s\n", str);
+        }
+        ch_desc->url_eo = NULL;
+        break;
       }
-      printf("ZZZ %s ZZZ\n", ch_desc->resolution_url);
-      ch_desc->main_m3u8_url_eo = NULL;
+      case TS_LIST_DOWNLOAD:
+      {
+        int id, year = 0, month = 0, mday = 0, hour = 0, min = 0, sec = 0;
+        char *tmp = ch_desc->downloaded_data, *endl, *ts_str;
+        printf(ch_desc->downloaded_data);
+        while(*tmp != '\0')
+        {
+          if (*tmp == '\n')
+          {
+            tmp++;
+            continue;
+          }
+          if (*tmp == '#')
+          {
+            while(*tmp != '\n' && *tmp != '\0') tmp++;
+            continue;
+          }
+          endl = strchr(tmp, '\n');
+          if (endl) ts_str = strndup(tmp, endl - tmp);
+          else ts_str = strdup(tmp);
+          year  = strtoul(tmp, &tmp, 10); tmp++;
+          month = strtoul(tmp, &tmp, 10); tmp++;
+          mday  = strtoul(tmp, &tmp, 10); tmp++;
+          hour  = strtoul(tmp, &tmp, 10); tmp++;
+          min   = strtoul(tmp, &tmp, 10); tmp++;
+          sec   = strtoul(tmp, &tmp, 10); tmp++;
+          id = sec + (min * SEC_IN_MIN) + (hour * SEC_IN_HOUR) + (mday * SEC_IN_DAY) + (month * SEC_IN_MONTH) + ((year - 2000) * SEC_IN_YEAR);
+          if (id > ch_desc->last_ts_id)
+          {
+            printf("TS to download: %s\n", ts_str);
+            ch_desc->ts_to_download = eina_list_append(ch_desc->ts_to_download, ts_str);
+            ch_desc->last_ts_id = id;
+          }
+          while(*tmp != '\n' && *tmp != '\0') tmp++;
+        }
+        ch_desc->url_eo = NULL;
+        _ts_download(ch_desc);
+        break;
+      }
+      case TS_DOWNLOAD:
+      {
+        FILE *fp = fopen("toto.mp4", "ab");
+        fwrite(ch_desc->downloaded_data, ch_desc->downloaded_data_size, 1, fp);
+        fclose(fp);
+        _ts_download(ch_desc);
+        break;
+      }
     }
+    memset(ch_desc->downloaded_data, '\0', ch_desc->downloaded_data_full_size);
+    ch_desc->downloaded_data_size = 0;
   }
 
   return EINA_TRUE;
 }
 
 static void
-_grid_item_focused(void *data EINA_UNUSED, Evas_Object *obj, void *event_info)
+_grid_item_focused(void *data EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *event_info)
 {
   char str[1024];
   Elm_Object_Item *it = event_info;
@@ -413,23 +534,40 @@ _grid_item_focused(void *data EINA_UNUSED, Evas_Object *obj, void *event_info)
   printf("Focused: %s\n", ch_desc->name);
   elm_object_text_set(_channel_desc_label, str);
 
-  if (!ch_desc->resolution_url)
+  if (!ch_desc->ts_list_url)
   {
-    if (!ch_desc->main_m3u8_url_eo)
+    if (!ch_desc->url_eo)
     {
-      sprintf(str, "%s/%s", ch_desc->main_url, ch_desc->main_m3u8_url);
-      printf("main url: %s\n", str);
-      memset(ch_desc->downloaded_data, '\0', sizeof(ch_desc->downloaded_data));
-      ch_desc->main_m3u8_url_eo = ecore_con_url_new(str);
-      ecore_con_url_data_set(ch_desc->main_m3u8_url_eo, ch_desc);
-      ecore_con_url_additional_header_add(ch_desc->main_m3u8_url_eo, "User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:72.0) Gecko/20100101 Firefox/72.0");
-      ecore_con_url_timeout_set(ch_desc->main_m3u8_url_eo, 5.0);
+      sprintf(str, "%s/%s", ch_desc->main_url, ch_desc->main_m3u8_url_part);
+      printf("main m3u8 url: %s\n", str);
+      ch_desc->url_eo = ecore_con_url_new(str);
+      ch_desc->dwn_state = MAIN_M3U8_DOWNLOAD;
+      ch_desc->last_ts_id = 0;
+      ecore_con_url_data_set(ch_desc->url_eo, ch_desc);
+      ecore_con_url_additional_header_add(ch_desc->url_eo, USER_AGENT);
+      ecore_con_url_timeout_set(ch_desc->url_eo, 5.0);
 
-      if (!ecore_con_url_get(ch_desc->main_m3u8_url_eo))
+      if (!ecore_con_url_get(ch_desc->url_eo))
       {
         printf("Cannot download %s\n", str);
-        ch_desc->main_m3u8_url_eo = NULL;
+        ch_desc->url_eo = NULL;
       }
+    }
+  }
+  else
+  {
+    sprintf(str, "%s/%s", ch_desc->main_url, ch_desc->ts_list_url);
+    printf("ts list url: %s\n", str);
+    ch_desc->url_eo = ecore_con_url_new(str);
+    ch_desc->dwn_state = TS_LIST_DOWNLOAD;
+    ecore_con_url_data_set(ch_desc->url_eo, ch_desc);
+    ecore_con_url_additional_header_add(ch_desc->url_eo, USER_AGENT);
+    ecore_con_url_timeout_set(ch_desc->url_eo, 5.0);
+
+    if (!ecore_con_url_get(ch_desc->url_eo))
+    {
+      printf("Cannot download %s\n", str);
+      ch_desc->url_eo = NULL;
     }
   }
 }
@@ -440,7 +578,7 @@ _grid_item_unfocused(void *data EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void 
 }
 
 static void
-_grid_item_double_clicked(void *data EINA_UNUSED, Evas_Object *obj, void *event_info)
+_grid_item_double_clicked(void *data EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *event_info EINA_UNUSED)
 {
   Elm_Object_Item *it = elm_gengrid_selected_item_get(_main_grid);
   Channel_Desc *ch_desc = elm_object_item_data_get(it);
@@ -449,7 +587,7 @@ _grid_item_double_clicked(void *data EINA_UNUSED, Evas_Object *obj, void *event_
 
 int main(int argc, char **argv)
 {
-  Eo *win, *bg, *o, *panes1, *panes2;
+  Eo *win, *bg, *panes1, *panes2;
 
   Ecore_Con_Url *channels_ecore_url;
   char channels_url[256];
@@ -526,7 +664,7 @@ int main(int argc, char **argv)
 
   sprintf(channels_url, "%s/api/getchannels?login=%s&password=%s", baseUrl, _config->username, _config->password);
   channels_ecore_url = ecore_con_url_new(channels_url);
-  ecore_con_url_additional_header_add(channels_ecore_url, "User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:72.0) Gecko/20100101 Firefox/72.0");
+  ecore_con_url_additional_header_add(channels_ecore_url, USER_AGENT);
   ecore_con_url_timeout_set(channels_ecore_url, 5.0);
 
   ecore_event_handler_add(ECORE_CON_EVENT_URL_DATA, _url_data_cb, NULL);
