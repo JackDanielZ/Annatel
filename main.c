@@ -4,6 +4,7 @@
 #include <Elementary.h>
 #include <Ecore.h>
 #include <Ecore_Con.h>
+#include <Emotion.h>
 
 #include <getopt.h>
 
@@ -18,10 +19,6 @@
 #define SEC_IN_YEAR  (12 * SEC_IN_MONTH)
 
 #define MOVIE_FILE "annatel.mp4"
-
-static const char *baseUrl = "http://www.annatel.tv";
-
-static char _channels_list_xml[100000] = {0};
 
 typedef enum
 {
@@ -56,6 +53,8 @@ typedef struct
   Eina_List *ts_to_download; /* Element is the last part of the URL to download the timeslot */
   Ecore_Con_Url *url_eo;
   FILE *output_fp;
+  Eo *eo_item;
+  Eo *logo_image;
 
   Download_State dwn_state;
   int last_ts_id;
@@ -64,8 +63,14 @@ typedef struct
   int downloaded_data_full_size;
 } Channel_Desc;
 
-static Eo *_main_grid = NULL, *_channel_desc_label = NULL;
+static const char *baseUrl = "http://www.annatel.tv";
+
+static char _channels_list_xml[100000] = {0};
+
+static Eo *_main_grid = NULL, *_channel_desc_label = NULL, *_video_box = NULL, *_video_obj = NULL, *_video_player_obj;
 static Elm_Gengrid_Item_Class *_main_grid_item_class = NULL;
+
+static Channel_Desc *_focused_ch_desc = NULL;
 
 static Eet_Data_Descriptor *_config_edd = NULL;
 
@@ -175,23 +180,6 @@ _next_word(Lexer *l, const char *special, Eina_Bool special_allowed)
    return word;
 }
 
-#if 0
-static long
-_next_integer(Lexer *l)
-{
-   _ws_skip(l);
-   const char *str = l->current;
-   while (*str && (*str >= '0' && *str <= '9')) str++;
-   if (str == l->current) return -1;
-   int size = str - l->current;
-   char *n_str = alloca(size + 1);
-   memcpy(n_str, l->current, size);
-   n_str[size] = '\0';
-   l->current = str;
-   return atol(n_str);
-}
-#endif
-
 #define JUMP_AT(l, ...) _jump_at(l, __VA_ARGS__, NULL)
 
 static Eina_Bool
@@ -295,11 +283,11 @@ _main_grid_item_content_get(void *data, Evas_Object *obj, const char *part)
   Channel_Desc *ch_desc = data;
   if (!strcmp(part, "elm.swallow.icon"))
   {
-    Evas_Object *image = elm_image_add(obj);
-    elm_image_file_set(image, ch_desc->logo_url, NULL);
-    elm_image_aspect_fixed_set(image, EINA_FALSE);
-    evas_object_show(image);
-    return image;
+    ch_desc->logo_image = elm_image_add(obj);
+    elm_image_file_set(ch_desc->logo_image, ch_desc->logo_url, NULL);
+    elm_image_aspect_fixed_set(ch_desc->logo_image, EINA_FALSE);
+    evas_object_show(ch_desc->logo_image);
+    return ch_desc->logo_image;
   }
   return NULL;
 }
@@ -316,6 +304,31 @@ _main_grid_item_del(void *data, Evas_Object *obj EINA_UNUSED)
   free(data);
 }
 
+static Eina_Bool
+_ts_list_download(void *data)
+{
+  Channel_Desc *ch_desc = data;
+  char str[1024];
+
+  if (_focused_ch_desc != ch_desc) return EINA_FALSE;
+
+  sprintf(str, "%s/%s", ch_desc->main_url, ch_desc->ts_list_url);
+  printf("ts list url: %s\n", str);
+  ch_desc->url_eo = ecore_con_url_new(str);
+  ch_desc->dwn_state = TS_LIST_DOWNLOAD;
+  ecore_con_url_data_set(ch_desc->url_eo, ch_desc);
+  ecore_con_url_additional_header_add(ch_desc->url_eo, USER_AGENT);
+  ecore_con_url_timeout_set(ch_desc->url_eo, 5.0);
+
+  if (!ecore_con_url_get(ch_desc->url_eo))
+  {
+    printf("Cannot download %s\n", str);
+    ch_desc->url_eo = NULL;
+  }
+
+  return EINA_FALSE;
+}
+
 static void
 _ts_download(Channel_Desc *ch_desc)
 {
@@ -323,7 +336,9 @@ _ts_download(Channel_Desc *ch_desc)
   char *ts_str = eina_list_data_get(ch_desc->ts_to_download);
   if (!ts_str) return;
 
-  sprintf(str, "%s/%s/%s", ch_desc->main_url, ch_desc->resolution_name, ts_str);
+  if (_focused_ch_desc != ch_desc) return;
+
+  sprintf(str, "%s/%s/%s", ch_desc->main_url, ch_desc->resolution_name?:"", ts_str);
   printf("ts url: %s\n", str);
   free(ts_str);
   ch_desc->ts_to_download = eina_list_remove_list(ch_desc->ts_to_download, ch_desc->ts_to_download);
@@ -352,6 +367,8 @@ _url_data_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
   }
   else
   {
+    if (_focused_ch_desc != ch_desc) return EINA_FALSE;
+
     if (ch_desc->downloaded_data_full_size < ch_desc->downloaded_data_size + url_data->size)
     {
       ch_desc->downloaded_data_full_size = 2 * (ch_desc->downloaded_data_size + url_data->size);
@@ -416,13 +433,15 @@ _url_complete_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
           _ws_skip(&l);
         }
         _ws_skip(&l);
-        elm_gengrid_item_append(_main_grid, _main_grid_item_class, ch_desc, NULL, NULL);
+        ch_desc->eo_item = elm_gengrid_item_append(_main_grid, _main_grid_item_class, ch_desc, NULL, NULL);
+        if (_focused_ch_desc == NULL) _focused_ch_desc = ch_desc;
       }
       if (_is_next_token(&l, "</channels>"))
       {
         end_channels = 1;
       }
     }
+    elm_gengrid_item_selected_set(_focused_ch_desc->eo_item, EINA_TRUE);
   }
   else
   {
@@ -430,7 +449,7 @@ _url_complete_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
     {
       case MAIN_M3U8_DOWNLOAD:
       {
-        char str[1024];
+        if (_focused_ch_desc != ch_desc) return EINA_FALSE;
         /* We have to parse the resolutions */
         char *tmp = ch_desc->downloaded_data;
         char *res_str;
@@ -452,28 +471,23 @@ _url_complete_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
             if (res_str) tmp = res_str + 1;
           }
         }
+        if (!ch_desc->ts_list_url)
+        {
+          /* The channel provides only one resolution */
+          ch_desc->ts_list_url = strdup(ch_desc->main_m3u8_url_part);
+          goto handle_ts_list;
+        }
         tmp = strchr(ch_desc->ts_list_url, '/');
         ch_desc->resolution_name = strndup(ch_desc->ts_list_url, tmp - ch_desc->ts_list_url);
-        sprintf(str, "%s/%s", ch_desc->main_url, ch_desc->ts_list_url);
-        printf("ts list url: %s\n", str);
-        ch_desc->url_eo = ecore_con_url_new(str);
-        ch_desc->dwn_state = TS_LIST_DOWNLOAD;
-        ecore_con_url_data_set(ch_desc->url_eo, ch_desc);
-        ecore_con_url_additional_header_add(ch_desc->url_eo, USER_AGENT);
-        ecore_con_url_timeout_set(ch_desc->url_eo, 5.0);
-
-        if (!ecore_con_url_get(ch_desc->url_eo))
-        {
-          printf("Cannot download %s\n", str);
-        }
-        ch_desc->url_eo = NULL;
+        _ts_list_download(ch_desc);
         break;
       }
       case TS_LIST_DOWNLOAD:
       {
+        if (_focused_ch_desc != ch_desc) return EINA_FALSE;
+handle_ts_list:
         int id, year = 0, month = 0, mday = 0, hour = 0, min = 0, sec = 0;
         char *tmp = ch_desc->downloaded_data, *endl, *ts_str;
-        printf(ch_desc->downloaded_data);
         while(*tmp != '\0')
         {
           if (*tmp == '\n')
@@ -505,14 +519,39 @@ _url_complete_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
           while(*tmp != '\n' && *tmp != '\0') tmp++;
         }
         ch_desc->url_eo = NULL;
-        _ts_download(ch_desc);
+        if (ch_desc->ts_to_download)
+          _ts_download(ch_desc);
+        else
+          ecore_timer_add(5.0, _ts_list_download, ch_desc);
         break;
       }
       case TS_DOWNLOAD:
       {
-        if (ch_desc->output_fp)
-          fwrite(ch_desc->downloaded_data, ch_desc->downloaded_data_size, 1, ch_desc->output_fp);
-        _ts_download(ch_desc);
+        if (_focused_ch_desc != ch_desc) return EINA_FALSE;
+        if (!ch_desc->output_fp) ch_desc->output_fp = fopen(MOVIE_FILE, "wb");
+
+        fwrite(ch_desc->downloaded_data, ch_desc->downloaded_data_size, 1, ch_desc->output_fp);
+        if (!_video_obj)
+        {
+          _video_obj = elm_video_add(_video_box);
+//          evas_object_size_hint_weight_set(_video_obj, EVAS_HINT_EXPAND, EVAS_HINT_EXPAND);
+//          elm_box_pack_end(_video_box, _video_obj);
+          evas_object_show(_video_obj);
+
+          _video_player_obj = elm_player_add(_video_box);
+          evas_object_size_hint_weight_set(_video_player_obj, EVAS_HINT_EXPAND, EVAS_HINT_EXPAND);
+          elm_object_content_set(_video_player_obj, _video_obj);
+          elm_box_pack_end(_video_box, _video_player_obj);
+          evas_object_show(_video_player_obj);
+
+          elm_video_play_position_set(_video_obj, 0.0);
+          elm_video_file_set(_video_obj, MOVIE_FILE);
+          elm_video_play(_video_obj);
+        }
+        if (ch_desc->ts_to_download)
+          _ts_download(ch_desc);
+        else
+          ecore_timer_add(5.0, _ts_list_download, ch_desc);
         break;
       }
     }
@@ -531,11 +570,13 @@ _grid_item_focused(void *data EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *e
   Channel_Desc *ch_desc = elm_object_item_data_get(it);
 
   if (!ch_desc) return;
+
+  _focused_ch_desc = ch_desc;
+
   sprintf(str, "<font_size=20><b>Channel: </b>%s<br><b>Title: </b>%s<br><b>Description: </b>%s<br></font_size>", ch_desc->name, ch_desc->desc_title, ch_desc->desc);
   printf("Focused: %s\n", ch_desc->name);
   elm_object_text_set(_channel_desc_label, str);
 
-  ch_desc->output_fp = fopen(MOVIE_FILE, "wb");
   if (!ch_desc->ts_list_url)
   {
     if (!ch_desc->url_eo)
@@ -558,20 +599,10 @@ _grid_item_focused(void *data EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *e
   }
   else
   {
-    sprintf(str, "%s/%s", ch_desc->main_url, ch_desc->ts_list_url);
-    printf("ts list url: %s\n", str);
-    ch_desc->url_eo = ecore_con_url_new(str);
-    ch_desc->dwn_state = TS_LIST_DOWNLOAD;
-    ecore_con_url_data_set(ch_desc->url_eo, ch_desc);
-    ecore_con_url_additional_header_add(ch_desc->url_eo, USER_AGENT);
-    ecore_con_url_timeout_set(ch_desc->url_eo, 5.0);
-
-    if (!ecore_con_url_get(ch_desc->url_eo))
-    {
-      printf("Cannot download %s\n", str);
-      ch_desc->url_eo = NULL;
-    }
+    _ts_list_download(ch_desc);
   }
+  if (efl_file_loaded_get(ch_desc->logo_image) == EINA_FALSE)
+    elm_gengrid_item_update(ch_desc->eo_item);
 }
 
 static void
@@ -580,9 +611,20 @@ _grid_item_unfocused(void *data EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void 
   Elm_Object_Item *it = event_info;
   Channel_Desc *ch_desc = elm_object_item_data_get(it);
 
+  if (_focused_ch_desc != ch_desc) return;
+
+  _focused_ch_desc = NULL;
+
   if (!ch_desc) return;
-  fclose(ch_desc->output_fp);
+  if (ch_desc->output_fp) fclose(ch_desc->output_fp);
   ch_desc->output_fp = NULL;
+  ch_desc->last_ts_id = 0;
+
+  evas_object_del(_video_obj);
+  _video_obj = NULL;
+  evas_object_del(_video_player_obj);
+  _video_player_obj = NULL;
+  printf("Unfocused: %s\n", ch_desc->name);
 }
 
 static void
@@ -609,6 +651,7 @@ int main(int argc, char **argv)
   getopt_long (argc, argv, "", long_options, NULL);
 
   eina_init();
+  emotion_init();
   ecore_init();
   ecore_con_init();
   ecore_con_url_init();
@@ -662,12 +705,17 @@ int main(int argc, char **argv)
 
   _channel_desc_label = elm_entry_add(win);
   elm_object_text_set(_channel_desc_label, "<b>This is a small label</b>");
-  elm_label_line_wrap_set(_channel_desc_label, ELM_WRAP_CHAR);
   evas_object_show(_channel_desc_label);
   elm_object_part_content_set(panes2, "left", _channel_desc_label);
 
+  _video_box = elm_box_add(win);
+  evas_object_size_hint_weight_set(_video_box, EVAS_HINT_EXPAND, EVAS_HINT_EXPAND);
+  evas_object_size_hint_align_set(_video_box, EVAS_HINT_FILL, EVAS_HINT_FILL);
+  evas_object_show(_video_box);
+  elm_object_part_content_set(panes2, "right", _video_box);
+
   elm_win_maximized_set(win, EINA_TRUE);
-//  elm_win_fullscreen_set(win, EINA_TRUE);
+  elm_win_fullscreen_set(win, EINA_TRUE);
   evas_object_show(win);
 
   sprintf(channels_url, "%s/api/getchannels?login=%s&password=%s", baseUrl, _config->username, _config->password);
@@ -692,6 +740,7 @@ exit:
   ecore_con_url_shutdown();
   ecore_con_shutdown();
   ecore_shutdown();
+  emotion_shutdown();
   eina_shutdown();
   return 0;
 }
