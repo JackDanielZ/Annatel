@@ -67,6 +67,8 @@ static const char *baseUrl = "http://www.annatel.tv";
 
 static char _channels_list_xml[100000] = {0};
 
+static Eina_List *_all_channels = NULL; /* List of Channel_Desc */
+
 static Eo *_main_grid = NULL, *_channel_desc_label = NULL, *_video_box = NULL, *_video_obj = NULL, *_video_player_obj;
 static Elm_Gengrid_Item_Class *_main_grid_item_class = NULL;
 
@@ -305,6 +307,22 @@ _main_grid_item_del(void *data, Evas_Object *obj EINA_UNUSED)
 }
 
 static Eina_Bool
+_logos_update(void *data EINA_UNUSED)
+{
+  Eina_List *itr;
+  Channel_Desc *ch_desc;
+  Eina_Bool updated = EINA_FALSE;
+  EINA_LIST_FOREACH(_all_channels, itr, ch_desc)
+  {
+    if (efl_file_loaded_get(ch_desc->logo_image) == EINA_TRUE) continue;
+    printf("Update logo for %s\n", ch_desc->name);
+    elm_gengrid_item_update(ch_desc->eo_item);
+    updated = EINA_TRUE;
+  }
+  return updated;
+}
+
+static Eina_Bool
 _ts_list_download(void *data)
 {
   Channel_Desc *ch_desc = data;
@@ -338,7 +356,7 @@ _ts_download(Channel_Desc *ch_desc)
 
   if (_focused_ch_desc != ch_desc) return;
 
-  sprintf(str, "%s/%s/%s", ch_desc->main_url, ch_desc->resolution_name?:"", ts_str);
+  sprintf(str, "%s/%s%s%s", ch_desc->main_url, ch_desc->resolution_name?:"", ch_desc->resolution_name?"/":"", ts_str);
   printf("ts url: %s\n", str);
   free(ts_str);
   ch_desc->ts_to_download = eina_list_remove_list(ch_desc->ts_to_download, ch_desc->ts_to_download);
@@ -434,6 +452,7 @@ _url_complete_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
         }
         _ws_skip(&l);
         ch_desc->eo_item = elm_gengrid_item_append(_main_grid, _main_grid_item_class, ch_desc, NULL, NULL);
+        _all_channels = eina_list_append(_all_channels, ch_desc);
         if (_focused_ch_desc == NULL) _focused_ch_desc = ch_desc;
       }
       if (_is_next_token(&l, "</channels>"))
@@ -441,6 +460,7 @@ _url_complete_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
         end_channels = 1;
       }
     }
+    ecore_timer_add(2.0, _logos_update, NULL);
     elm_gengrid_item_selected_set(_focused_ch_desc->eo_item, EINA_TRUE);
   }
   else
@@ -601,8 +621,6 @@ _grid_item_focused(void *data EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *e
   {
     _ts_list_download(ch_desc);
   }
-  if (efl_file_loaded_get(ch_desc->logo_image) == EINA_FALSE)
-    elm_gengrid_item_update(ch_desc->eo_item);
 }
 
 static void
