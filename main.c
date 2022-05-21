@@ -461,7 +461,7 @@ _url_complete_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
       }
     }
     ecore_timer_add(2.0, _logos_update, NULL);
-    elm_gengrid_item_selected_set(_focused_ch_desc->eo_item, EINA_TRUE);
+    elm_object_item_focus_set(_focused_ch_desc->eo_item, EINA_TRUE);
   }
   else
   {
