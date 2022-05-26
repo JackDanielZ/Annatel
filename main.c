@@ -470,6 +470,7 @@ _url_complete_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
       case MAIN_M3U8_DOWNLOAD:
       {
         if (_focused_ch_desc != ch_desc) return EINA_FALSE;
+        if (!ch_desc->downloaded_data) return EINA_FALSE;
         /* We have to parse the resolutions */
         char *tmp = ch_desc->downloaded_data;
         char *res_str;
@@ -582,10 +583,64 @@ handle_ts_list:
   return EINA_TRUE;
 }
 
+static Eina_Bool
+_key_down_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *ei)
+{
+   Ecore_Event_Key *ev = ei;
+
+   if (ev && ev->key)
+   {
+     printf("Key pressed: %s\n", ev->key);
+     if (!strcmp(ev->key, "Return"))
+     {
+       static Eo *win = NULL, *video_obj = NULL, *video_player_obj = NULL;
+
+       if (win == NULL)
+       {
+         double cur_pos = elm_video_play_position_get(_video_obj);
+
+         elm_video_pause(_video_obj);
+
+         win = elm_win_add(NULL, "Annatel", ELM_WIN_BASIC);
+         elm_win_autodel_set(win, EINA_TRUE);
+
+         video_obj = elm_video_add(win);
+         evas_object_show(video_obj);
+
+         video_player_obj = elm_player_add(win);
+         evas_object_size_hint_weight_set(video_player_obj, EVAS_HINT_EXPAND, EVAS_HINT_EXPAND);
+         elm_object_content_set(video_player_obj, video_obj);
+         elm_win_resize_object_add(win, video_player_obj);
+         evas_object_show(video_player_obj);
+
+         elm_video_play_position_set(video_obj, cur_pos);
+         elm_video_file_set(video_obj, MOVIE_FILE);
+         elm_video_play(video_obj);
+
+         elm_win_maximized_set(win, EINA_TRUE);
+         elm_win_fullscreen_set(win, EINA_TRUE);
+         evas_object_show(win);
+       }
+       else
+       {
+         double cur_pos = elm_video_play_position_get(video_obj);
+
+         evas_object_del(win);
+         win = NULL;
+
+         elm_video_play_position_set(_video_obj, cur_pos);
+         elm_video_play(_video_obj);
+       }
+     }
+   }
+
+   return ECORE_CALLBACK_PASS_ON;
+}
+
 static void
 _grid_item_focused(void *data EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *event_info)
 {
-  char str[1024];
+  char *str;
   Elm_Object_Item *it = event_info;
   Channel_Desc *ch_desc = elm_object_item_data_get(it);
 
@@ -593,6 +648,7 @@ _grid_item_focused(void *data EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *e
 
   _focused_ch_desc = ch_desc;
 
+  str = malloc(10000);
   sprintf(str, "<font_size=20><b>Channel: </b>%s<br><b>Title: </b>%s<br><b>Description: </b>%s<br></font_size>", ch_desc->name, ch_desc->desc_title, ch_desc->desc);
   printf("Focused: %s\n", ch_desc->name);
   elm_object_text_set(_channel_desc_label, str);
@@ -631,6 +687,7 @@ _grid_item_unfocused(void *data EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void 
 
   if (_focused_ch_desc != ch_desc) return;
 
+  elm_gengrid_item_selected_set(ch_desc->eo_item, EINA_FALSE);
   _focused_ch_desc = NULL;
 
   if (!ch_desc) return;
@@ -643,14 +700,6 @@ _grid_item_unfocused(void *data EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void 
   evas_object_del(_video_player_obj);
   _video_player_obj = NULL;
   printf("Unfocused: %s\n", ch_desc->name);
-}
-
-static void
-_grid_item_double_clicked(void *data EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *event_info EINA_UNUSED)
-{
-  Elm_Object_Item *it = elm_gengrid_selected_item_get(_main_grid);
-  Channel_Desc *ch_desc = elm_object_item_data_get(it);
-  printf("Clicked: %s\n", ch_desc->name);
 }
 
 int main(int argc, char **argv)
@@ -703,7 +752,6 @@ int main(int argc, char **argv)
   evas_object_size_hint_align_set(_main_grid, EVAS_HINT_FILL, EVAS_HINT_FILL);
   evas_object_smart_callback_add(_main_grid, "item,focused", _grid_item_focused, NULL);
   evas_object_smart_callback_add(_main_grid, "item,unfocused", _grid_item_unfocused, NULL);
-  evas_object_smart_callback_add(_main_grid, "clicked,double", _grid_item_double_clicked, NULL);
   elm_object_part_content_set(panes1, "left", _main_grid);
   elm_panes_content_left_size_set(panes1, 0.8);
   evas_object_show(_main_grid);
@@ -722,7 +770,7 @@ int main(int argc, char **argv)
   elm_object_part_content_set(panes1, "right", panes2);
 
   _channel_desc_label = elm_entry_add(win);
-  elm_object_text_set(_channel_desc_label, "<b>This is a small label</b>");
+  elm_object_text_set(_channel_desc_label, NULL);
   evas_object_show(_channel_desc_label);
   elm_object_part_content_set(panes2, "left", _channel_desc_label);
 
@@ -743,6 +791,7 @@ int main(int argc, char **argv)
 
   ecore_event_handler_add(ECORE_CON_EVENT_URL_DATA, _url_data_cb, NULL);
   ecore_event_handler_add(ECORE_CON_EVENT_URL_COMPLETE, _url_complete_cb, NULL);
+  ecore_event_handler_add(ECORE_EVENT_KEY_DOWN, _key_down_cb, win);
 
   if (!ecore_con_url_get(channels_ecore_url))
   {
