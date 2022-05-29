@@ -37,6 +37,7 @@ typedef struct
 {
    const char *username;
    const char *password;
+   const char *last_channel;
 } Config;
 
 typedef struct
@@ -168,6 +169,7 @@ _config_eet_load()
    _config_edd = eet_data_descriptor_stream_new(&eddc);
    EET_DATA_DESCRIPTOR_ADD_BASIC(_config_edd, Config, "username", username, EET_T_STRING);
    EET_DATA_DESCRIPTOR_ADD_BASIC(_config_edd, Config, "password", password, EET_T_STRING);
+   EET_DATA_DESCRIPTOR_ADD_BASIC(_config_edd, Config, "last_channel", last_channel, EET_T_STRING);
 }
 
 static void
@@ -212,6 +214,7 @@ _config_load()
         _config = calloc(1, sizeof(Config));
         _config->username = "USER";
         _config->password = "PASS";
+        _config->last_channel = NULL;
      }
    else
      {
@@ -397,7 +400,8 @@ _url_complete_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
         _ws_skip(&l);
         ch_desc->eo_item = elm_gengrid_item_append(_main_grid, _main_grid_item_class, ch_desc, NULL, NULL);
         _all_channels = eina_list_append(_all_channels, ch_desc);
-        if (_focused_ch_desc == NULL) _focused_ch_desc = ch_desc;
+        if (_focused_ch_desc == NULL && _config->last_channel && !strcmp(_config->last_channel, ch_desc->name))
+          _focused_ch_desc = ch_desc;
       }
       if (_is_next_token(&l, "</channels>"))
       {
@@ -608,6 +612,8 @@ _grid_item_focused(void *data EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *e
   if (!ch_desc) return;
 
   _focused_ch_desc = ch_desc;
+  _config->last_channel = ch_desc->name;
+  _config_save();
 
   str = malloc(10000);
   sprintf(str, "<font_size=20><b>Channel: </b>%s<br><b>Title: </b>%s<br><b>Description: </b>%s<br></font_size>", ch_desc->name, ch_desc->desc_title, ch_desc->desc);
