@@ -78,56 +78,6 @@ static Eet_Data_Descriptor *_config_edd = NULL;
 
 static Config *_config = NULL;
 
-#if 0
-static Eo *
-_label_create(Eo *parent, const char *text, Eo **wref)
-{
-   Eo *label = wref ? *wref : NULL;
-   if (!label)
-     {
-        label = elm_label_add(parent);
-        evas_object_size_hint_align_set(label, 0.0, EVAS_HINT_FILL);
-        evas_object_size_hint_weight_set(label, EVAS_HINT_EXPAND, 0.0);
-        evas_object_show(label);
-        if (wref) efl_wref_add(label, wref);
-     }
-   elm_object_text_set(label, text);
-   return label;
-}
-
-static Eo *
-_button_create(Eo *parent, const char *text, Eo *icon, Eo **wref, Evas_Smart_Cb cb_func, void *cb_data)
-{
-   Eo *bt = wref ? *wref : NULL;
-   if (!bt)
-     {
-        bt = elm_button_add(parent);
-        evas_object_size_hint_align_set(bt, EVAS_HINT_FILL, EVAS_HINT_FILL);
-        evas_object_size_hint_weight_set(bt, EVAS_HINT_EXPAND, 0.0);
-        evas_object_show(bt);
-        if (wref) efl_wref_add(bt, wref);
-        if (cb_func) evas_object_smart_callback_add(bt, "clicked", cb_func, cb_data);
-     }
-   elm_object_text_set(bt, text);
-   elm_object_part_content_set(bt, "icon", icon);
-   return bt;
-}
-
-static Eo *
-_icon_create(Eo *parent, const char *path, Eo **wref)
-{
-   Eo *ic = wref ? *wref : NULL;
-   if (!ic)
-     {
-        ic = elm_icon_add(parent);
-        elm_icon_standard_set(ic, path);
-        evas_object_show(ic);
-        if (wref) efl_wref_add(ic, wref);
-     }
-   return ic;
-}
-#endif
-
 static void
 _ws_skip(Lexer *l)
 {
@@ -292,12 +242,6 @@ _main_grid_item_content_get(void *data, Evas_Object *obj, const char *part)
     return ch_desc->logo_image;
   }
   return NULL;
-}
-
-static Eina_Bool
-_main_grid_item_state_get(void *data EINA_UNUSED, Evas_Object *obj EINA_UNUSED, const char *part EINA_UNUSED)
-{
-  return EINA_FALSE;
 }
 
 static void
@@ -555,8 +499,6 @@ handle_ts_list:
         if (!_video_obj)
         {
           _video_obj = elm_video_add(_video_box);
-//          evas_object_size_hint_weight_set(_video_obj, EVAS_HINT_EXPAND, EVAS_HINT_EXPAND);
-//          elm_box_pack_end(_video_box, _video_obj);
           evas_object_show(_video_obj);
 
           _video_player_obj = elm_player_add(_video_box);
@@ -760,7 +702,6 @@ int main(int argc, char **argv)
   _main_grid_item_class->item_style = "default";
   _main_grid_item_class->func.text_get = _main_grid_item_text_get;
   _main_grid_item_class->func.content_get = _main_grid_item_content_get;
-  _main_grid_item_class->func.state_get = _main_grid_item_state_get;
   _main_grid_item_class->func.del = _main_grid_item_del;
 
   panes2 = elm_panes_add(win);
