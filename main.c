@@ -532,10 +532,10 @@ _key_down_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *ei)
 
    if (ev && ev->key)
    {
+     static Eo *win = NULL, *video_obj = NULL, *video_player_obj = NULL;
      printf("Key pressed: %s\n", ev->key);
      if (!strcmp(ev->key, "Return"))
      {
-       static Eo *win = NULL, *video_obj = NULL, *video_player_obj = NULL;
 
        if (win == NULL)
        {
@@ -572,6 +572,25 @@ _key_down_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *ei)
 
          elm_video_play_position_set(_video_obj, cur_pos);
          elm_video_play(_video_obj);
+       }
+     }
+     else if (!strcmp(ev->key, "Escape"))
+     {
+       if (win)
+       {
+         /* Exit full screen */
+         double cur_pos = elm_video_play_position_get(video_obj);
+
+         evas_object_del(win);
+         win = NULL;
+
+         elm_video_play_position_set(_video_obj, cur_pos);
+         elm_video_play(_video_obj);
+       }
+       else
+       {
+         /* Unselect the current channel */
+         elm_object_item_focus_set(_focused_ch_desc->eo_item, EINA_FALSE);
        }
      }
    }
