@@ -79,6 +79,8 @@ static Eet_Data_Descriptor *_config_edd = NULL;
 
 static Config *_config = NULL;
 
+static Eina_Bool _play_allowed = EINA_FALSE;
+
 static void
 _ws_skip(Lexer *l)
 {
@@ -409,7 +411,8 @@ _url_complete_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *event_info)
       }
     }
     ecore_timer_add(2.0, _logos_update, NULL);
-    elm_object_item_focus_set(_focused_ch_desc->eo_item, EINA_TRUE);
+    if (_focused_ch_desc)
+      elm_object_item_focus_set(_focused_ch_desc->eo_item, EINA_TRUE);
   }
   else
   {
@@ -538,6 +541,7 @@ _key_down_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *ei)
    {
      static Eo *win = NULL, *video_obj = NULL, *video_player_obj = NULL;
      printf("Key pressed: %s\n", ev->key);
+     _play_allowed = EINA_TRUE;
      if (!strcmp(ev->key, "Return"))
      {
 
@@ -593,8 +597,12 @@ _key_down_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *ei)
        }
        else
        {
-         /* Unselect the current channel */
-         elm_object_item_focus_set(_focused_ch_desc->eo_item, EINA_FALSE);
+         /* Delete the video player and forbid playing until a key is pressed */
+         evas_object_del(_video_obj);
+         _video_obj = NULL;
+         evas_object_del(_video_player_obj);
+         _video_player_obj = NULL;
+         _play_allowed = EINA_FALSE;
        }
      }
    }
@@ -609,7 +617,7 @@ _grid_item_focused(void *data EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *e
   Elm_Object_Item *it = event_info;
   Channel_Desc *ch_desc = elm_object_item_data_get(it);
 
-  if (!ch_desc) return;
+  if (!_play_allowed || !ch_desc) return;
 
   _focused_ch_desc = ch_desc;
   _config->last_channel = ch_desc->name;
