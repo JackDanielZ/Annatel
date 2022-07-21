@@ -605,6 +605,10 @@ _key_down_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *ei)
          _play_allowed = EINA_FALSE;
        }
      }
+     else if (!strcmp(ev->key, "F4"))
+     {
+       elm_exit();
+     }
    }
 
    return ECORE_CALLBACK_PASS_ON;
