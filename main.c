@@ -503,7 +503,7 @@ handle_ts_list:
         if (!ch_desc->output_fp) ch_desc->output_fp = fopen(MOVIE_FILE, "wb");
 
         fwrite(ch_desc->downloaded_data, ch_desc->downloaded_data_size, 1, ch_desc->output_fp);
-        if (!_video_obj)
+        if (_play_allowed && !_video_obj)
         {
           _video_obj = elm_video_add(_video_box);
           evas_object_show(_video_obj);
@@ -541,9 +541,15 @@ _key_down_cb(void *data EINA_UNUSED, int type EINA_UNUSED, void *ei)
    {
      static Eo *win = NULL, *video_obj = NULL, *video_player_obj = NULL;
      printf("Key pressed: %s\n", ev->key);
-     _play_allowed = EINA_TRUE;
-     if (!strcmp(ev->key, "Return"))
+
+     if (!strcmp(ev->key, "Left") || !strcmp(ev->key, "Right") ||
+         !strcmp(ev->key, "Up") || !strcmp(ev->key, "Down"))
      {
+       _play_allowed = EINA_TRUE;
+     }
+     else if (!strcmp(ev->key, "Return"))
+     {
+       _play_allowed = EINA_TRUE;
 
        if (win == NULL)
        {
